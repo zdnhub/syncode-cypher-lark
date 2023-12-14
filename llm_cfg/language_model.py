@@ -75,6 +75,10 @@ class HuggingFaceModel(LanguageModel):
             logits_processor=self.logit_processors
         )
 
+        # Clear gpu memory
+        print(torch.cuda.memory_summary(device=self.device))
+        torch.cuda.empty_cache()
+
         last_token_id = [len(generated_ids[i]) for i in range(batch_size)]
         if self.logit_processors is not None:
             python_decoder = self.logit_processors[0]
