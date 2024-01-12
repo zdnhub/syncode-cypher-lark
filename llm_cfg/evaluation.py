@@ -155,6 +155,7 @@ def check_correctness(
                 + "\n"
                 + f"check({problem['entry_point']})"
             )
+            print(check_program)
             try:
                 exec_globals = {}
                 with swallow_io():
