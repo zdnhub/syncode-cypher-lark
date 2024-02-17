@@ -3,7 +3,7 @@ cmake==3.27.2
 filelock==3.12.3
 fire==0.5.0
 fsspec==2023.9.0
-huggingface-hub==0.16.4
+huggingface-hub==0.19.4
 human-eval==1.0.3
 idna==3.4
 interegular==0.3.2
@@ -34,9 +34,10 @@ sentencepiece==0.1.99
 six==1.16.0
 sympy==1.12
 termcolor==2.3.0
-tokenizers==0.13.3
+tokenizers==0.15.0
 torch==2.0.1
 tqdm==4.66.1
+transformers
 triton==2.0.0
 typing_extensions==4.7.1
 urllib3==2.0.4
