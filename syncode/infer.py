@@ -63,7 +63,7 @@ class Syncode:
         # Check inputs
         assert mode in ["original", "grammar_mask"]
         assert dataset in ["mbxp", "humaneval", "mathqa-x", "input"]
-        gen_kwargs = {'max_length', 'max_new_tokens', 'min_length', 'min_new_tokens', 'early_stopping', 'do_sample', 'num_beams', 'use_cache', 'temperature', 'top_k', 'top_p', 'num_return_sequences', 'pad_token_id', 'eos_token_id'}
+        gen_kwargs = {'max_length', 'max_new_tokens', 'min_length', 'min_new_tokens', 'early_stopping', 'do_sample', 'num_beams', 'use_cache', 'temperature', 'top_k', 'top_p', 'num_return_sequences', 'pad_token_id', 'eos_token_id', 'custom_decoding'}
         invalid_kwargs = kwargs.keys() - gen_kwargs
         assert invalid_kwargs == set(), f"Invalid arguments {invalid_kwargs}"
 
