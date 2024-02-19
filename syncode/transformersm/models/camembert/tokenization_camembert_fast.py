@@ -36,15 +36,15 @@ VOCAB_FILES_NAMES = {"vocab_file": "sentencepiece.bpe.model", "tokenizer_file": 
 
 PRETRAINED_VOCAB_FILES_MAP = {
     "vocab_file": {
-        "almanach/camembert-base": "https://huggingface.co/almanach/camembert-base/resolve/main/sentencepiece.bpe.model",
+        "camembert-base": "https://huggingface.co/camembert-base/resolve/main/sentencepiece.bpe.model",
     },
     "tokenizer_file": {
-        "almanach/camembert-base": "https://huggingface.co/almanach/camembert-base/resolve/main/tokenizer.json",
+        "camembert-base": "https://huggingface.co/camembert-base/resolve/main/tokenizer.json",
     },
 }
 
 PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
-    "almanach/camembert-base": 512,
+    "camembert-base": 512,
 }
 
 SPIECE_UNDERLINE = "▁"

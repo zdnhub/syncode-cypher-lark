@@ -60,7 +60,6 @@ from .data.data_collator import DataCollator, DataCollatorWithPadding, default_d
 from .debug_utils import DebugOption, DebugUnderflowOverflow
 from .hyperparameter_search import ALL_HYPERPARAMETER_SEARCH_BACKENDS, default_hp_search_backend
 from .integrations.deepspeed import deepspeed_init, deepspeed_load_checkpoint, is_deepspeed_available
-from .integrations.tpu import tpu_spmd_dataloader
 from .modelcard import TrainingSummary
 from .modeling_utils import PreTrainedModel, load_sharded_checkpoint, unwrap_model
 from .models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES, MODEL_MAPPING_NAMES
@@ -77,7 +76,6 @@ from .trainer_callback import (
     TrainerState,
 )
 from .trainer_pt_utils import (
-    AcceleratorConfig,
     DistributedTensorGatherer,
     IterableDatasetShard,
     LabelSmoother,
@@ -171,8 +169,6 @@ if is_datasets_available():
 if is_torch_tpu_available(check_device=False):
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
-    import torch_xla.distributed.spmd as xs
-    import torch_xla.runtime as xr
 
 
 if is_sagemaker_mp_enabled():
@@ -188,6 +184,7 @@ else:
 
 if is_safetensors_available():
     import safetensors.torch
+
 
 if is_peft_available():
     from peft import PeftModel
@@ -216,23 +213,7 @@ if is_accelerate_available():
 
 
 def _is_peft_model(model):
-    if is_peft_available():
-        classes_to_check = (PeftModel,) if is_peft_available() else ()
-        # Here we also check if the model is an instance of `PeftMixedModel` introduced in peft>=0.7.0: https://github.com/huggingface/transformers/pull/28321
-        if version.parse(importlib.metadata.version("peft")) >= version.parse("0.7.0"):
-            from peft import PeftMixedModel
-
-            classes_to_check = (*classes_to_check, PeftMixedModel)
-        return isinstance(model, classes_to_check)
-    return False
-
-
-def _get_fsdp_ckpt_kwargs():
-    # TODO: @AjayP13, @younesbelkada replace this check with version check at the next `accelerate` release
-    if is_accelerate_available() and "adapter_only" in list(inspect.signature(save_fsdp_model).parameters):
-        return {"adapter_only": True}
-    else:
-        return {}
+    return is_peft_available() and isinstance(model, PeftModel)
 
 
 if TYPE_CHECKING:
@@ -424,9 +405,6 @@ class Trainer:
         _is_quantized_and_base_model = getattr(model, "is_quantized", False) and not getattr(
             model, "_hf_peft_config_loaded", False
         )
-        _quantization_method_supports_training = (
-            getattr(model, "hf_quantizer", None) is not None and model.hf_quantizer.is_trainable
-        )
 
         # At this stage the model is already loaded
         if _is_quantized_and_base_model and not _is_peft_model(model):
@@ -435,11 +413,10 @@ class Trainer:
                 " the quantized model to correctly perform fine-tuning. Please see: https://huggingface.co/docs/transformers/peft"
                 " for more details"
             )
-        elif _is_quantized_and_base_model and not _quantization_method_supports_training:
+        elif _is_quantized_and_base_model and not getattr(model, "_is_quantized_training_enabled", False):
             raise ValueError(
-                f"The model you are trying to fine-tune is quantized with {model.hf_quantizer.quantization_config.quant_method}"
-                " but that quantization method do not support training. Please open an issue on GitHub: https://github.com/huggingface/transformers"
-                f" to request the support for training support for {model.hf_quantizer.quantization_config.quant_method}"
+                "The model you want to train is loaded in 8-bit precision.  if you want to fine-tune an 8-bit"
+                " model, please make sure that you have installed `bitsandbytes>=0.37.0`. "
             )
 
         self.is_fsdp_xla_enabled = args.fsdp_config["xla"]
@@ -638,13 +615,6 @@ class Trainer:
         if args.torch_compile and not is_torch_compile_available():
             raise RuntimeError("Using torch.compile requires PyTorch 2.0 or higher.")
 
-        self.is_fsdp_xla_v2_enabled = args.fsdp_config["xla_fsdp_v2"]
-        if self.is_fsdp_xla_v2_enabled:
-            # Prepare the SPMD mesh that is going to be used by the data loader and the FSDPv2 wrapper.
-            # Tensor axis is just a placeholder where it will not be used in FSDPv2.
-            num_devices = xr.global_runtime_device_count()
-            xs.set_global_mesh(xs.Mesh(np.array(range(num_devices)), (num_devices, 1), axis_names=("fsdp", "tensor")))
-
     def _activate_neftune(self, model):
         r"""
         Activates the neftune as presented in this code: https://github.com/neelsjain/NEFTune and paper:
@@ -730,11 +700,7 @@ class Trainer:
             # Inspect model forward signature to keep only the arguments it accepts.
             model_to_inspect = self.model
             if _is_peft_model(self.model):
-                if hasattr(self.model, "get_base_model"):
-                    model_to_inspect = self.model.get_base_model()
-                else:
-                    # PeftMixedModel do not provide a `get_base_model` method
-                    model_to_inspect = self.model.base_model.model
+                model_to_inspect = self.model.get_base_model()
             signature = inspect.signature(model_to_inspect.forward)
             self._signature_columns = list(signature.parameters.keys())
             # Labels may be named label or label_ids, the default data collator handles that.
@@ -840,7 +806,6 @@ class Trainer:
             dataloader_params["sampler"] = self._get_train_sampler()
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
             dataloader_params["worker_init_fn"] = seed_worker
-            dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
@@ -898,7 +863,6 @@ class Trainer:
         if not isinstance(eval_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_eval_sampler(eval_dataset)
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
-            dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
         return self.accelerator.prepare(DataLoader(eval_dataset, **dataloader_params))
 
@@ -931,7 +895,6 @@ class Trainer:
         if not isinstance(test_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_eval_sampler(test_dataset)
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
-            dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
         # We use the same batch_size as for eval.
         return self.accelerator.prepare(DataLoader(test_dataset, **dataloader_params))
@@ -1395,11 +1358,6 @@ class Trainer:
                     size_based_auto_wrap_policy,
                     transformer_auto_wrap_policy,
                 )
-
-                if self.is_fsdp_xla_v2_enabled:
-                    from torch_xla.experimental.spmd_fully_sharded_data_parallel import (
-                        SpmdFullyShardedDataParallel as FSDPv2,
-                    )
             except ImportError:
                 raise ImportError("Missing XLA FSDP related module; please make sure to use torch-xla >= 2.0.")
             auto_wrap_policy = None
@@ -1431,40 +1389,15 @@ class Trainer:
             if self.args.fsdp_config["xla_fsdp_grad_ckpt"]:
                 # Apply gradient checkpointing to auto-wrapped sub-modules if specified
                 def auto_wrapper_callable(m, *args, **kwargs):
-                    target_cls = FSDP if not self.is_fsdp_xla_v2_enabled else FSDPv2
-                    return target_cls(checkpoint_module(m), *args, **kwargs)
+                    return FSDP(checkpoint_module(m), *args, **kwargs)
 
             # Wrap the base model with an outer FSDP wrapper
-            if self.is_fsdp_xla_v2_enabled:
-
-                def shard_output(output, mesh):
-                    from .modeling_outputs import CausalLMOutputWithPast
-
-                    real_output = None
-                    if isinstance(output, torch.Tensor):
-                        real_output = output
-                    elif isinstance(output, tuple):
-                        real_output = output[0]
-                    elif isinstance(output, CausalLMOutputWithPast):
-                        real_output = output.logits
-
-                    if real_output is None:
-                        raise ValueError("Something went wrong, the output of the model shouldn't be `None`")
-                    xs.mark_sharding(real_output, mesh, ("fsdp", None, None))
-
-                self.model = model = FSDPv2(
-                    model,
-                    shard_output=shard_output,
-                    auto_wrap_policy=auto_wrap_policy,
-                    auto_wrapper_callable=auto_wrapper_callable,
-                )
-            else:
-                self.model = model = FSDP(
-                    model,
-                    auto_wrap_policy=auto_wrap_policy,
-                    auto_wrapper_callable=auto_wrapper_callable,
-                    **fsdp_kwargs,
-                )
+            self.model = model = FSDP(
+                model,
+                auto_wrap_policy=auto_wrap_policy,
+                auto_wrapper_callable=auto_wrapper_callable,
+                **fsdp_kwargs,
+            )
 
             # Patch `xm.optimizer_step` should not reduce gradients in this case,
             # as FSDP does not need gradient reduction over sharded parameters.
@@ -1633,8 +1566,6 @@ class Trainer:
         logger.debug(f"Currently training with a batch size of: {self._train_batch_size}")
         # Data loader and number of training steps
         train_dataloader = self.get_train_dataloader()
-        if self.is_fsdp_xla_v2_enabled:
-            train_dataloader = tpu_spmd_dataloader(train_dataloader)
 
         # Setting up training control variables:
         # number of training epochs: num_train_epochs
@@ -1744,8 +1675,6 @@ class Trainer:
         use_accelerator_prepare = True if model is self.model else False
 
         if delay_optimizer_creation:
-            if use_accelerator_prepare:
-                self.model = self.accelerator.prepare(self.model)
             self.create_optimizer_and_scheduler(num_training_steps=max_steps)
 
         # prepare using `accelerator` prepare
@@ -1776,9 +1705,7 @@ class Trainer:
         # ckpt loading
         if resume_from_checkpoint is not None:
             if self.is_deepspeed_enabled:
-                deepspeed_load_checkpoint(
-                    self.model_wrapped, resume_from_checkpoint, load_module_strict=not _is_peft_model(self.model)
-                )
+                deepspeed_load_checkpoint(self.model_wrapped, resume_from_checkpoint)
             elif is_sagemaker_mp_enabled() or self.is_fsdp_enabled:
                 self._load_from_checkpoint(resume_from_checkpoint, self.model_wrapped)
 
@@ -2004,11 +1931,6 @@ class Trainer:
                     self.control = self.callback_handler.on_substep_end(args, self.state, self.control)
 
                 if self.control.should_epoch_stop or self.control.should_training_stop:
-                    # PyTorch/XLA relies on the data loader to insert the mark_step for
-                    # each step. Since we are breaking the loop early, we need to manually
-                    # insert the mark_step here.
-                    if is_torch_tpu_available():
-                        xm.mark_step()
                     break
             if step < 0:
                 logger.warning(
@@ -2193,13 +2115,7 @@ class Trainer:
                     # release memory
                     del state_dict
             elif self.is_fsdp_enabled:
-                load_fsdp_model(
-                    self.accelerator.state.fsdp_plugin,
-                    self.accelerator,
-                    model,
-                    resume_from_checkpoint,
-                    **_get_fsdp_ckpt_kwargs(),
-                )
+                load_fsdp_model(self.accelerator.state.fsdp_plugin, self.accelerator, model, resume_from_checkpoint)
             else:
                 # We load the model state dict on the CPU to avoid an OOM error.
                 if self.args.save_safetensors and os.path.isfile(safe_weights_file):
@@ -2249,18 +2165,10 @@ class Trainer:
 
         model = self.model_wrapped if is_sagemaker_mp_enabled() else self.model
         if self.is_deepspeed_enabled:
-            deepspeed_load_checkpoint(
-                self.model_wrapped,
-                self.state.best_model_checkpoint,
-                load_module_strict=not _is_peft_model(self.model),
-            )
+            deepspeed_load_checkpoint(self.model_wrapped, self.state.best_model_checkpoint)
         elif self.is_fsdp_enabled:
             load_result = load_fsdp_model(
-                self.accelerator.state.fsdp_plugin,
-                self.accelerator,
-                model,
-                self.state.best_model_checkpoint,
-                **_get_fsdp_ckpt_kwargs(),
+                self.accelerator.state.fsdp_plugin, self.accelerator, model, self.state.best_model_checkpoint
             )
         elif (
             os.path.exists(best_model_path)
@@ -2461,7 +2369,7 @@ class Trainer:
         output_dir = os.path.join(run_dir, checkpoint_folder)
         if os.path.exists(output_dir) and len(os.listdir(output_dir)) > 0:
             logger.warning(
-                f"Checkpoint destination directory {output_dir} already exists and is non-empty. "
+                f"Checkpoint destination directory {output_dir} already exists and is non-empty."
                 "Saving will proceed but saved results may be invalid."
             )
             staging_output_dir = output_dir
@@ -2517,13 +2425,7 @@ class Trainer:
 
             # Maybe delete some older checkpoints.
             if self.args.should_save:
-                # Solely rely on numerical checkpoint id for rotation.
-                # mtime is not reliable especially on some fuse fs in cloud environments.
-                self._rotate_checkpoints(use_mtime=False, output_dir=run_dir)
-        elif self.is_local_process_zero():
-            # Clean up the remaining staging checkpoint folders on other nodes
-            if staging_output_dir != output_dir and os.path.exists(staging_output_dir):
-                shutil.rmtree(staging_output_dir)
+                self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
 
         self.args.distributed_state.wait_for_everyone()
 
@@ -2588,9 +2490,7 @@ class Trainer:
                 self.model_wrapped.save_checkpoint(output_dir)
         elif self.is_fsdp_enabled:
             # save fsdp specific ckpt for resuming from ckpt
-            save_fsdp_model(
-                self.accelerator.state.fsdp_plugin, self.accelerator, self.model, output_dir, **_get_fsdp_ckpt_kwargs()
-            )
+            save_fsdp_model(self.accelerator.state.fsdp_plugin, self.accelerator, self.model, output_dir)
             save_fsdp_optimizer(
                 self.accelerator.state.fsdp_plugin, self.accelerator, self.optimizer, self.model, output_dir
             )
@@ -2684,7 +2584,6 @@ class Trainer:
                             self.optimizer,
                             self.model,
                             checkpoint,
-                            **_get_fsdp_ckpt_kwargs(),
                         )
                     else:
                         self.optimizer.load_state_dict(
@@ -2992,7 +2891,6 @@ class Trainer:
 
     def _save_tpu(self, output_dir: Optional[str] = None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
-
         logger.info(f"Saving model checkpoint to {output_dir}")
         model = self.model
         model.to("cpu")
@@ -3191,9 +3089,6 @@ class Trainer:
         self._memory_tracker.start()
 
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
-        if self.is_fsdp_xla_v2_enabled:
-            eval_dataloader = tpu_spmd_dataloader(eval_dataloader)
-
         start_time = time.time()
 
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
@@ -3842,10 +3737,7 @@ class Trainer:
         # Add additional tags in the case the model has already some tags and users pass
         # "tags" argument to `push_to_hub` so that trainer automatically handles internal tags
         # from all models since Trainer does not call `model.push_to_hub`.
-        if getattr(self.model, "model_tags", None) is not None:
-            if "tags" not in kwargs:
-                kwargs["tags"] = []
-
+        if "tags" in kwargs and getattr(self.model, "model_tags", None) is not None:
             # If it is a string, convert it to a list
             if isinstance(kwargs["tags"], str):
                 kwargs["tags"] = [kwargs["tags"]]
@@ -4084,21 +3976,11 @@ class Trainer:
         gradient_accumulation_plugin = GradientAccumulationPlugin(**grad_acc_kwargs)
 
         # create accelerator object
-        accelerator_kwargs = {}
-        if self.args.accelerator_config is not None:
-            accelerator_kwargs = self.args.accelerator_config
-            # dict and AcceleratorConfigs are parseable, json files are not
-            if isinstance(accelerator_kwargs, AcceleratorConfig):
-                accelerator_kwargs = accelerator_kwargs.to_dict()
-            elif isinstance(accelerator_kwargs, dict):
-                # Some values may need to go through non-accelerate aligned defaults
-                # and we need to run the `__post_init__` to set them
-                accelerator_kwargs = AcceleratorConfig(**accelerator_kwargs).to_dict()
-
         self.accelerator = Accelerator(
+            dispatch_batches=self.args.dispatch_batches,
+            split_batches=self.args.split_batches,
             deepspeed_plugin=self.args.deepspeed_plugin,
             gradient_accumulation_plugin=gradient_accumulation_plugin,
-            **accelerator_kwargs,
         )
         # some Trainer classes need to use `gather` instead of `gather_for_metrics`, thus we store a flag
         self.gather_function = self.accelerator.gather_for_metrics
@@ -4126,20 +4008,6 @@ class Trainer:
 
         if self.is_deepspeed_enabled and getattr(self.args, "hf_deepspeed_config", None) is None:
             self.propagate_args_to_deepspeed()
-
-        # `save_only_model` can't be used with DeepSpeed/FSDP along with `load_best_model_at_end`
-        if (
-            self.args.save_only_model
-            and (self.is_deepspeed_enabled or self.is_fsdp_enabled)
-            and self.args.load_best_model_at_end
-        ):
-            wrapper = "DeepSpeed" if self.is_deepspeed_enabled else "FSDP"
-            raise ValueError(f"{wrapper} can't be used with `save_only_model` along with `load_best_model_at_end`.")
-
-        # `auto_find_batch_size` isn't yet supported with DeepSpeed/FSDP
-        if (self.is_deepspeed_enabled or self.is_fsdp_enabled) and self.args.auto_find_batch_size:
-            wrapper = "DeepSpeed" if self.is_deepspeed_enabled else "FSDP"
-            raise NotImplementedError(f"`{wrapper}` doesn't support `auto_find_batch_size`.")
 
     def propagate_args_to_deepspeed(self, auto_find_batch_size=False):
         """

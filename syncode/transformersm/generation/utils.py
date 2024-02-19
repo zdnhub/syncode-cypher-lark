@@ -24,7 +24,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
-from ..cache_utils import Cache, DynamicCache, StaticCache
+from ..cache_utils import Cache, DynamicCache
 from ..integrations.deepspeed import is_deepspeed_zero3_enabled
 from ..modeling_outputs import CausalLMOutputWithPast, Seq2SeqLMOutput
 from ..models.auto import (
@@ -92,10 +92,6 @@ logger = logging.get_logger(__name__)
 if is_accelerate_available():
     from accelerate.hooks import AlignDevicesHook, add_hook_to_module
 
-NEED_SETUP_CACHE_CLASSES_MAPPING = {
-    "static": StaticCache,
-}
-
 
 @dataclass
 class GenerateDecoderOnlyOutput(ModelOutput):
@@ -135,7 +131,7 @@ class GenerateDecoderOnlyOutput(ModelOutput):
 @dataclass
 class GenerateEncoderDecoderOutput(ModelOutput):
     """
-    Outputs of encoder-decoder generation models, when using non-beam methods.
+    Outputs of encoder-decider generation models, when using non-beam methods.
 
     Args:
         sequences (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
@@ -441,9 +437,6 @@ class GenerationMixin:
             if isinstance(value, torch.Tensor):
                 batch_size = value.shape[0]
                 break
-
-        if "inputs_embeds" in model_kwargs:
-            return torch.ones((batch_size, 0), dtype=torch.long, device=self.device)
         return torch.ones((batch_size, 1), dtype=torch.long, device=self.device) * bos_token_id
 
     def _prepare_attention_mask_for_generation(
@@ -504,7 +497,7 @@ class GenerationMixin:
         batch_size: int,
         model_input_name: str,
         model_kwargs: Dict[str, torch.Tensor],
-        decoder_start_token_id: Union[int, List[int]] = None,
+        decoder_start_token_id: int = None,
         bos_token_id: int = None,
         device: torch.device = None,
     ) -> Tuple[torch.LongTensor, Dict[str, torch.Tensor]]:
@@ -522,17 +515,7 @@ class GenerationMixin:
         decoder_start_token_id = self._get_decoder_start_token_id(decoder_start_token_id, bos_token_id)
         if device is None:
             device = self.device
-        if isinstance(decoder_start_token_id, list):
-            if len(decoder_start_token_id) != batch_size:
-                raise ValueError(
-                    f"`decoder_start_token_id` expcted to have length {batch_size} but got {len(decoder_start_token_id)}"
-                )
-            decoder_input_ids_start = torch.tensor(decoder_start_token_id, dtype=torch.long, device=device)
-            decoder_input_ids_start = decoder_input_ids_start.view(-1, 1)
-        else:
-            decoder_input_ids_start = (
-                torch.ones((batch_size, 1), dtype=torch.long, device=device) * decoder_start_token_id
-            )
+        decoder_input_ids_start = torch.ones((batch_size, 1), dtype=torch.long, device=device) * decoder_start_token_id
 
         # no user input -> use decoder_start_token_id as decoder_input_ids
         if decoder_input_ids is None:
@@ -544,13 +527,7 @@ class GenerationMixin:
             pass
         # user input but doesn't start with decoder_start_token_id -> prepend decoder_start_token_id (and adjust
         # decoder_attention_mask if provided)
-        elif (
-            isinstance(decoder_start_token_id, int)
-            and (decoder_input_ids[:, 0] != decoder_start_token_id).all().item()
-        ) or (
-            isinstance(decoder_start_token_id, torch.Tensor)
-            and (decoder_input_ids[:, 0] != decoder_start_token_id[:, 0]).all().item()
-        ):
+        elif (decoder_input_ids[:, 0] != decoder_start_token_id).all().item():
             decoder_input_ids = torch.cat([decoder_input_ids_start, decoder_input_ids], dim=-1)
             if "decoder_attention_mask" in model_kwargs:
                 decoder_attention_mask = model_kwargs["decoder_attention_mask"]
@@ -562,9 +539,7 @@ class GenerationMixin:
 
         return decoder_input_ids, model_kwargs
 
-    def _get_decoder_start_token_id(
-        self, decoder_start_token_id: Union[int, List[int]] = None, bos_token_id: int = None
-    ) -> int:
+    def _get_decoder_start_token_id(self, decoder_start_token_id: int = None, bos_token_id: int = None) -> int:
         decoder_start_token_id = (
             decoder_start_token_id
             if decoder_start_token_id is not None
@@ -979,7 +954,7 @@ class GenerationMixin:
         >>> import numpy as np
 
         >>> tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
         >>> tokenizer.pad_token_id = tokenizer.eos_token_id
         >>> inputs = tokenizer(["Today is"], return_tensors="pt")
 
@@ -993,7 +968,7 @@ class GenerationMixin:
         >>> input_length = 1 if model.config.is_encoder_decoder else inputs.input_ids.shape[1]
         >>> generated_tokens = outputs.sequences[:, input_length:]
         >>> for tok, score in zip(generated_tokens[0], transition_scores[0]):
-        ...     # | token | token string | log probability | probability
+        ...     # | token | token string | logits | probability
         ...     print(f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
         |   262 |  the     | -1.414 | 24.33%
         |  1110 |  day     | -2.609 | 7.36%
@@ -1163,10 +1138,11 @@ class GenerationMixin:
             )
         if input_ids_length >= generation_config.max_length:
             input_ids_string = "decoder_input_ids" if self.config.is_encoder_decoder else "input_ids"
-            raise ValueError(
+            warnings.warn(
                 f"Input length of {input_ids_string} is {input_ids_length}, but `max_length` is set to"
                 f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
-                " increasing `max_length` or, better yet, setting `max_new_tokens`."
+                " increasing `max_new_tokens`.",
+                UserWarning,
             )
 
         # 2. Min length warnings due to unfeasible parameter combinations
@@ -1423,27 +1399,6 @@ class GenerationMixin:
                     "(https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)"
                 )
             generation_config.max_length = generation_config.max_new_tokens + input_ids_length
-
-        # otherwise the total length [inputs-embeds-len + new-tokens-len] will go beyond indicated `max_length``
-        elif (
-            model_input_name == "inputs_embeds"
-            and inputs_tensor.shape[:-1] != input_ids.shape
-            and not self.config.is_encoder_decoder
-        ):
-            generation_config.max_length -= inputs_tensor.shape[1]
-
-        # if we don't pass `past_key_values` and a cache_implementation is specified
-        if generation_config.cache_implementation in NEED_SETUP_CACHE_CLASSES_MAPPING and not model_kwargs.get(
-            "past_key_values", False
-        ):
-            cache_cls = NEED_SETUP_CACHE_CLASSES_MAPPING[generation_config.cache_implementation]
-            if not callable(getattr(self, "_setup_cache", None)):
-                raise ValueError(
-                    "The `generation_config` defines a `cache_implementation` that is not compatible with this model."
-                    " Make sure it has a `_setup_cache` function."
-                )
-            self._setup_cache(cache_cls, max_batch_size=batch_size, max_cache_len=generation_config.max_length)
-
         self._validate_generated_length(generation_config, input_ids_length, has_default_max_length)
 
         # 7. determine generation mode
@@ -1610,7 +1565,6 @@ class GenerationMixin:
                 output_scores=generation_config.output_scores,
                 return_dict_in_generate=generation_config.return_dict_in_generate,
                 synced_gpus=synced_gpus,
-                sequential=generation_config.low_memory,
                 **model_kwargs,
             )
 
@@ -2004,7 +1958,8 @@ class GenerationMixin:
             model_kwargs["past_key_values"] = tuple(new_key_values)
 
             if sequential:
-                all_outputs = []
+                all_outputs = {key: [] for key in outputs}  # defined in first loop iteration
+                all_last_hstates, all_hstates, all_logits = [], [], []
                 for i in range(top_k):
                     # compute the candidate tokens by the language model and collect their hidden_states
                     next_model_inputs = self.prepare_inputs_for_generation(top_k_ids[:, i].view(-1, 1), **model_kwargs)
@@ -2015,8 +1970,32 @@ class GenerationMixin:
                         output_hidden_states=True,
                         output_attentions=output_attentions,
                     )
-                    all_outputs.append(outputs)
-                outputs = stack_model_outputs(all_outputs)
+                    for key in all_outputs:
+                        all_outputs[key].append(outputs[key])
+
+                    if self.config.is_encoder_decoder:
+                        next_hidden = outputs.decoder_hidden_states[-1]
+                        full_hidden_states = outputs.decoder_hidden_states
+
+                    else:
+                        next_hidden = outputs.hidden_states[-1]
+                        full_hidden_states = outputs.hidden_states
+
+                    all_last_hstates.append(torch.squeeze(next_hidden, 0))
+                    all_hstates.append(full_hidden_states)
+                    all_logits.append(outputs.logits[:, -1, :])
+
+                # stack hidden states
+                next_hidden = torch.stack([all_last_hstates[i] for i in range(top_k)], dim=0)
+                final_full_hstates = [0 for i in range(len(full_hidden_states))]
+                for layer in range(len(full_hidden_states)):
+                    final_full_hstates[layer] = torch.stack(
+                        [torch.squeeze(all_hstates[i][layer], 0) for i in range(top_k)], dim=0
+                    )
+                full_hidden_states = tuple(final_full_hstates)
+
+                # stack logits
+                logits = torch.cat(all_logits, dim=0)
 
             else:
                 # compute the candidate tokens by the language model and collect their hidden_states
@@ -2029,15 +2008,15 @@ class GenerationMixin:
                     output_hidden_states=True,
                     output_attentions=output_attentions,
                 )
-            # name is different for encoder-decoder and decoder-only models
-            if self.config.is_encoder_decoder:
-                next_hidden = outputs.decoder_hidden_states[-1]
-                full_hidden_states = outputs.decoder_hidden_states
-            else:
-                next_hidden = outputs.hidden_states[-1]
-                full_hidden_states = outputs.hidden_states
+                # name is different for encoder-decoder and decoder-only models
+                if self.config.is_encoder_decoder:
+                    next_hidden = outputs.decoder_hidden_states[-1]
+                    full_hidden_states = outputs.decoder_hidden_states
+                else:
+                    next_hidden = outputs.hidden_states[-1]
+                    full_hidden_states = outputs.hidden_states
 
-            logits = outputs.logits[:, -1, :]
+                logits = outputs.logits[:, -1, :]
 
             context_hidden = last_hidden_states.repeat_interleave(top_k, dim=0)
 
@@ -2274,8 +2253,8 @@ class GenerationMixin:
         ...     MaxLengthCriteria,
         ... )
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+        >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
 
         >>> # set pad_token_id to eos_token_id because GPT2 does not have a PAD token
         >>> model.generation_config.pad_token_id = model.generation_config.eos_token_id
@@ -2541,8 +2520,8 @@ class GenerationMixin:
         ... )
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+        >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
 
         >>> # set pad_token_id to eos_token_id because GPT2 does not have a EOS token
         >>> model.config.pad_token_id = model.config.eos_token_id
@@ -2775,7 +2754,6 @@ class GenerationMixin:
         output_scores: Optional[bool] = None,
         return_dict_in_generate: Optional[bool] = None,
         synced_gpus: bool = False,
-        sequential: Optional[bool] = None,
         **model_kwargs,
     ) -> Union[GenerateBeamOutput, torch.LongTensor]:
         r"""
@@ -2821,10 +2799,6 @@ class GenerationMixin:
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
             synced_gpus (`bool`, *optional*, defaults to `False`):
                 Whether to continue running the while loop until max_length (needed for ZeRO stage 3)
-            sequential (`bool`, defaults to `False`):
-                By default, beam search has `batch_size * num_beams` as effective batch size (see `beam_search()` for
-                more details). This flag will avoid parallelizing the beam search and will instead run beam search
-                sequentially.
             model_kwargs:
                 Additional model specific kwargs will be forwarded to the `forward` function of the model. If model is
                 an encoder-decoder model the kwargs should include `encoder_outputs`.
@@ -2849,8 +2823,8 @@ class GenerationMixin:
         ... )
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
-        >>> model = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-base")
+        >>> tokenizer = AutoTokenizer.from_pretrained("t5-base")
+        >>> model = AutoModelForSeq2SeqLM.from_pretrained("t5-base")
 
         >>> encoder_input_str = "translate English to German: How old are you?"
         >>> encoder_input_ids = tokenizer(encoder_input_str, return_tensors="pt").input_ids
@@ -2891,7 +2865,6 @@ class GenerationMixin:
         # init values
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
-        sequential = sequential if sequential is not None else self.generation_config.low_memory
         if max_length is not None:
             warnings.warn(
                 "`max_length` is deprecated in this function, use"
@@ -2966,48 +2939,12 @@ class GenerationMixin:
 
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
-            # if sequential is True, split the input to batches of batch_size and run sequentially
-            if sequential:
-                if any(
-                    model_name in self.__class__.__name__.lower()
-                    for model_name in [
-                        "fsmt",
-                        "reformer",
-                        "bloom",
-                        "ctrl",
-                        "gpt_bigcode",
-                        "transo_xl",
-                        "xlnet",
-                        "cpm",
-                    ]
-                ):
-                    raise RuntimeError(
-                        f"Currently generation for {self.__class__.__name__} is not supported "
-                        f"for `low_memory beam_search`. Please open an issue on GitHub if you need this feature."
-                    )
-
-                inputs_per_sub_batches = _split_model_inputs(
-                    model_inputs, split_size=batch_size, full_batch_size=batch_beam_size
-                )
-                outputs_per_sub_batch = [
-                    self(
-                        **inputs_per_sub_batch,
-                        return_dict=True,
-                        output_attentions=output_attentions,
-                        output_hidden_states=output_hidden_states,
-                    )
-                    for inputs_per_sub_batch in inputs_per_sub_batches
-                ]
-
-                outputs = stack_model_outputs(outputs_per_sub_batch)
-
-            else:  # Unchanged original behavior
-                outputs = self(
-                    **model_inputs,
-                    return_dict=True,
-                    output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
-                )
+            outputs = self(
+                **model_inputs,
+                return_dict=True,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+            )
 
             if synced_gpus and this_peer_finished:
                 cur_len = cur_len + 1
@@ -3223,8 +3160,8 @@ class GenerationMixin:
         ... )
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
-        >>> model = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-base")
+        >>> tokenizer = AutoTokenizer.from_pretrained("t5-base")
+        >>> model = AutoModelForSeq2SeqLM.from_pretrained("t5-base")
 
         >>> encoder_input_str = "translate English to German: How old are you?"
         >>> encoder_input_ids = tokenizer(encoder_input_str, return_tensors="pt").input_ids
@@ -3555,8 +3492,8 @@ class GenerationMixin:
         ... )
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
-        >>> model = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-base")
+        >>> tokenizer = AutoTokenizer.from_pretrained("t5-base")
+        >>> model = AutoModelForSeq2SeqLM.from_pretrained("t5-base")
 
         >>> encoder_input_str = "translate English to German: How old are you?"
         >>> encoder_input_ids = tokenizer(encoder_input_str, return_tensors="pt").input_ids
@@ -3945,8 +3882,8 @@ class GenerationMixin:
         ... )
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
-        >>> model = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-base")
+        >>> tokenizer = AutoTokenizer.from_pretrained("t5-base")
+        >>> model = AutoModelForSeq2SeqLM.from_pretrained("t5-base")
 
         >>> encoder_input_str = "translate English to German: How old are you?"
         >>> encoder_input_ids = tokenizer(encoder_input_str, return_tensors="pt").input_ids
@@ -4297,9 +4234,9 @@ class GenerationMixin:
         ...     MaxLengthCriteria,
         ... )
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
-        >>> assistant_model = AutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
+        >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
+        >>> assistant_model = AutoModelForCausalLM.from_pretrained("distilgpt2")
         >>> # set pad_token_id to eos_token_id because GPT2 does not have a PAD token
         >>> model.generation_config.pad_token_id = model.generation_config.eos_token_id
         >>> input_prompt = "It might be possible to"
@@ -4561,13 +4498,6 @@ class GenerationMixin:
         if streamer is not None:
             streamer.end()
 
-        if (
-            hasattr(candidate_generator, "assistant_model")
-            and candidate_generator.assistant_model.generation_config.num_assistant_tokens_schedule == "heuristic"
-        ):
-            candidate_generator.assistant_model.generation_config.num_assistant_tokens = (
-                candidate_generator.num_assistant_tokens
-            )
         if return_dict_in_generate:
             if self.config.is_encoder_decoder:
                 return GenerateEncoderDecoderOutput(
@@ -4739,140 +4669,3 @@ def _ranking_fast(
     contrastive_score = torch.stack(torch.split(contrastive_score, beam_width))  # [B, K]
     _, selected_idx = contrastive_score.max(dim=-1)  # [B]
     return selected_idx
-
-
-def _split(data, full_batch_size: int, split_size: int = None):
-    """
-    Takes care of three cases:
-    1. data is a tensor: e.g. last_hidden_state, pooler_output etc. split them on the batch_size dim
-    2. data is a tuple: e.g. hidden_states, attentions etc. Keep the tuple as it is and split each tensor in it and
-       return a list of tuples
-    3. data is a tuple of tuples, e.g. past_key_values. Keep the tuple as it is and split each tuple in it and
-       return a list of tuples of tuples
-    (see documentation of ModelOutput)
-    """
-    if data is None:
-        return [None] * (full_batch_size // split_size)
-    if isinstance(data, torch.Tensor):
-        return [data[i : i + split_size] for i in range(0, full_batch_size, split_size)]
-    elif isinstance(data, tuple):
-        # If the elements of the tuple are also tuples (e.g., past_key_values in our earlier example)
-        if isinstance(data[0], tuple):
-            return [
-                tuple(tuple(tensor[i : i + split_size] for tensor in inner_tuple) for inner_tuple in data)
-                for i in range(0, full_batch_size, split_size)
-            ]
-
-        else:
-            return [
-                tuple(sub_tensor[i : i + split_size] for sub_tensor in data)
-                for i in range(0, full_batch_size, split_size)
-            ]
-    else:
-        raise ValueError(f"Unexpected attribute type: {type(data)}")
-
-
-def _split_model_inputs(
-    model_input: Union[ModelOutput, Dict], split_size: int, full_batch_size: int
-) -> List[Union[ModelOutput, Dict]]:
-    """
-    Split a ModelOutput object (or its subclasses) or Dict into a list of same-class objects based on a specified split
-    size. The input object is dict when it was prepared for forward pass and ModelOutput when it was returned from
-    previous forward pass.
-    """
-    # Edge case: if model_input is None, return a list of Nones
-    # this happens with Whisper where encoder_outputs is None
-    if model_input is None:
-        return [model_input] * (full_batch_size // split_size)
-    # Infer the class from the object
-    model_output_cls = type(model_input)
-    if (full_batch_size % split_size) != 0:
-        raise ValueError("`full_batch_size` must be divisible by `split_size`")
-
-    if split_size > full_batch_size:
-        raise ValueError("`split_size` must be smaller or equal to `full_batch_size`")
-
-    # Helper function to split tensors or tuples of tensors
-
-    # Find all the dataclass fields (e.g., last_hidden_state, pooler_output etc.) and split them
-    keys = (
-        model_input.__dataclass_fields__.keys() if hasattr(model_input, "__dataclass_fields__") else model_input.keys()
-    )
-    # We only keep keys that are in the model_input
-    keys = [k for k in keys if k in model_input]
-    # Here we can have four types of values: tensors, tuples of tensors and booleans, and encoder_outputs which is a
-    # ModelOutput object.
-    # bool should not be split but replicated for each split
-    bool_keys = [k for k in keys if isinstance(model_input[k], bool) or k == "cache_position"]
-    keys_to_ignore = ["cache_position", "encoder_outputs"]
-    non_bool_keys = [k for k in keys if not isinstance(model_input[k], bool) and k not in keys_to_ignore]
-
-    # we split the tensors and tuples of tensors
-    data_split_list = [
-        {k: _split(model_input[k], full_batch_size, split_size)[i] for k in non_bool_keys}
-        for i in range(full_batch_size // split_size)
-    ]
-    # bool values are the same and replicated for each split
-    bool_data = {k: model_input[k] for k in bool_keys}
-    # encoder_outputs is a ModelOutput object and should be split by its own
-    if "encoder_outputs" in model_input:
-        encoder_outputs_split = _split_model_inputs(model_input["encoder_outputs"], split_size, full_batch_size)
-        data_split_list = [
-            {**data_split, "encoder_outputs": encoder_outputs_split[i]} for i, data_split in enumerate(data_split_list)
-        ]
-
-    # Convert each dictionary in the list to an object of the inferred class
-    split_model_inputs: List[Union[ModelOutput, Dict]] = [
-        model_output_cls(**data_split, **bool_data) for data_split in data_split_list
-    ]
-
-    return split_model_inputs
-
-
-def stack_model_outputs(model_outputs: List[ModelOutput]) -> ModelOutput:
-    """
-    Stack a list of ModelOutput objects (or its subclasses) along the batch_size dimension. The function infers the
-    specific ModelOutput subclass from the list provided.
-    """
-    if not model_outputs:
-        raise ValueError("Input list is empty.")
-
-    # Infer the class from the first object in the list
-    model_output_cls = type(model_outputs[0])
-
-    # Ensure all objects are of the same type
-    if not all(isinstance(obj, model_output_cls) for obj in model_outputs):
-        raise ValueError("All elements in the list should be of the same type.")
-
-    # Helper function to concat tensors or tuples of tensors
-    def _concat(data):
-        """
-        Reverse of `_split` function above.
-        """
-        if any(data is None for data in data):
-            return None
-        if isinstance(data[0], torch.Tensor):
-            return torch.cat(data, dim=0)
-        elif isinstance(data[0], tuple):
-            # If the elements of the tuple are also tuples (e.g., past_key_values in our earlier example)
-            if isinstance(data[0][0], tuple):
-                return tuple(
-                    tuple(torch.cat([attr[i][j] for attr in data], dim=0) for j in range(len(data[0][0])))
-                    for i in range(len(data[0]))
-                )
-            else:
-                return tuple(torch.cat([attr[i] for attr in data], dim=0) for i in range(len(data[0])))
-        elif isinstance(data[0], (int, float)):
-            # If the elements are integers or floats, return a tensor
-            return torch.tensor(data)
-        else:
-            raise ValueError(f"Unexpected attribute type: {type(data[0])}")
-
-    # Use a dictionary comprehension to gather attributes from all objects and concatenate them
-    concatenated_data = {
-        k: _concat([getattr(model_output, k) for model_output in model_outputs])
-        for k in model_output_cls.__dataclass_fields__.keys()
-    }
-
-    # Return a new object of the inferred class with the concatenated attributes
-    return model_output_cls(**concatenated_data)

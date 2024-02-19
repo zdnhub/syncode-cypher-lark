@@ -148,19 +148,19 @@ MODEL_CLASSES = {
         BertForPreTraining,
         BERT_PRETRAINED_CONFIG_ARCHIVE_MAP,
     ),
-    "google-bert/bert-large-uncased-whole-word-masking-finetuned-squad": (
+    "bert-large-uncased-whole-word-masking-finetuned-squad": (
         BertConfig,
         TFBertForQuestionAnswering,
         BertForQuestionAnswering,
         BERT_PRETRAINED_CONFIG_ARCHIVE_MAP,
     ),
-    "google-bert/bert-large-cased-whole-word-masking-finetuned-squad": (
+    "bert-large-cased-whole-word-masking-finetuned-squad": (
         BertConfig,
         TFBertForQuestionAnswering,
         BertForQuestionAnswering,
         BERT_PRETRAINED_CONFIG_ARCHIVE_MAP,
     ),
-    "google-bert/bert-base-cased-finetuned-mrpc": (
+    "bert-base-cased-finetuned-mrpc": (
         BertConfig,
         TFBertForSequenceClassification,
         BertForSequenceClassification,
@@ -178,7 +178,7 @@ MODEL_CLASSES = {
         DPR_QUESTION_ENCODER_PRETRAINED_MODEL_ARCHIVE_LIST,
         DPR_READER_PRETRAINED_MODEL_ARCHIVE_LIST,
     ),
-    "openai-community/gpt2": (
+    "gpt2": (
         GPT2Config,
         TFGPT2LMHeadModel,
         GPT2LMHeadModel,
@@ -208,7 +208,7 @@ MODEL_CLASSES = {
         TransfoXLLMHeadModel,
         TRANSFO_XL_PRETRAINED_CONFIG_ARCHIVE_MAP,
     ),
-    "openai-community/openai-gpt": (
+    "openai-gpt": (
         OpenAIGPTConfig,
         TFOpenAIGPTLMHeadModel,
         OpenAIGPTLMHeadModel,
@@ -227,7 +227,7 @@ MODEL_CLASSES = {
         LayoutLMForMaskedLM,
         LAYOUTLM_PRETRAINED_MODEL_ARCHIVE_LIST,
     ),
-    "FacebookAI/roberta-large-mnli": (
+    "roberta-large-mnli": (
         RobertaConfig,
         TFRobertaForSequenceClassification,
         RobertaForSequenceClassification,
@@ -269,7 +269,7 @@ MODEL_CLASSES = {
         LxmertVisualFeatureEncoder,
         LXMERT_PRETRAINED_CONFIG_ARCHIVE_MAP,
     ),
-    "Salesforce/ctrl": (
+    "ctrl": (
         CTRLConfig,
         TFCTRLLMHeadModel,
         CTRLLMHeadModel,
