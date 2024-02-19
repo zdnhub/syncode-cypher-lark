@@ -1,9 +1,8 @@
 import uuid
-import warnings
 from typing import Any, Dict, List, Union
 
 from ..utils import add_end_docstrings, is_tf_available, is_torch_available, logging
-from .base import Pipeline, build_pipeline_init_args
+from .base import PIPELINE_INIT_ARGS, Pipeline
 
 
 if is_tf_available():
@@ -193,12 +192,13 @@ class Conversation:
 
 
 @add_end_docstrings(
-    build_pipeline_init_args(has_tokenizer=True),
+    PIPELINE_INIT_ARGS,
     r"""
         min_length_for_response (`int`, *optional*, defaults to 32):
             The minimum length (in number of tokens) for a response.
         minimum_tokens (`int`, *optional*, defaults to 10):
-            The minimum length of tokens to leave for a response.""",
+            The minimum length of tokens to leave for a response.
+    """,
 )
 class ConversationalPipeline(Pipeline):
     """
@@ -233,10 +233,6 @@ class ConversationalPipeline(Pipeline):
     """
 
     def __init__(self, *args, **kwargs):
-        warnings.warn(
-            "`ConversationalPipeline` is now deprecated, and the functionality has been moved to the standard `text-generation` pipeline, which now accepts lists of message dicts as well as strings. This class will be removed in v4.42.",
-            DeprecationWarning,
-        )
         super().__init__(*args, **kwargs)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token

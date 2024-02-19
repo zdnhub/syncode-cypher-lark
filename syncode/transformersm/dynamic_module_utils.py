@@ -224,7 +224,8 @@ def get_cached_module_file(
             This can be either:
 
             - a string, the *model id* of a pretrained model configuration hosted inside a model repo on
-              huggingface.co.
+              huggingface.co. Valid model ids can be located at the root-level, like `bert-base-uncased`, or namespaced
+              under a user or organization name, like `dbmdz/bert-base-german-cased`.
             - a path to a *directory* containing a configuration file saved using the
               [`~PreTrainedTokenizer.save_pretrained`] method, e.g., `./my_model_directory/`.
 
@@ -400,8 +401,6 @@ def get_class_from_dynamic_module(
 
     </Tip>
 
-
-
     Args:
         class_reference (`str`):
             The full name of the class to load, including its module and optionally its repo.
@@ -409,7 +408,8 @@ def get_class_from_dynamic_module(
             This can be either:
 
             - a string, the *model id* of a pretrained model configuration hosted inside a model repo on
-              huggingface.co.
+              huggingface.co. Valid model ids can be located at the root-level, like `bert-base-uncased`, or namespaced
+              under a user or organization name, like `dbmdz/bert-base-german-cased`.
             - a path to a *directory* containing a configuration file saved using the
               [`~PreTrainedTokenizer.save_pretrained`] method, e.g., `./my_model_directory/`.
 

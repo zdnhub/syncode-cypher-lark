@@ -15,7 +15,6 @@
 """Tokenization classes for Whisper."""
 import json
 import os
-import warnings
 from functools import lru_cache
 from typing import List, Optional, Tuple, Union
 
@@ -508,20 +507,6 @@ class WhisperTokenizer(PreTrainedTokenizer):
         return self.decoder.get(index, "")
 
     def _normalize(self, text):
-        warnings.warn(
-            "The private method `_normalize` is deprecated and will be removed in v5 of Transformers."
-            "You can normalize an input string using the Whisper English normalizer using the `normalize` method."
-        )
-        return self.normalize(text)
-
-    def _basic_normalize(self, text, remove_diacritics=False):
-        warnings.warn(
-            "The private method `_basic_normalize` is deprecated and will be removed in v5 of Transformers."
-            "You can normalize an input string using the Whisper basic normalizer using the `basic_normalize` method."
-        )
-        return self.basic_normalize(text, remove_diacritics=remove_diacritics)
-
-    def normalize(self, text):
         """
         Normalize a given string using the `EnglishTextNormalizer` class, which preforms commons transformation on
         english text.
@@ -530,7 +515,7 @@ class WhisperTokenizer(PreTrainedTokenizer):
         return normalizer(text)
 
     @staticmethod
-    def basic_normalize(text, remove_diacritics=False):
+    def _basic_normalize(text, remove_diacritics=False):
         """
         Normalize a given string using the `BasicTextNormalizer` class, which preforms commons transformation on
         multilingual text.
@@ -760,10 +745,10 @@ class WhisperTokenizer(PreTrainedTokenizer):
         text = "".join(sub_texts)
 
         if normalize:
-            clean_text = self.normalize(text)
+            clean_text = self._normalize(text)
             return clean_text
         elif basic_normalize:
-            clean_text = self.basic_normalize(text, remove_diacritics=remove_diacritics)
+            clean_text = self._basic_normalize(text, remove_diacritics=remove_diacritics)
             return clean_text
         else:
             return text
