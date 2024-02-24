@@ -11,7 +11,10 @@ from tqdm import tqdm
 from evaluation import check_coorectness
 from parsers.grammars.grammar import Grammar
 
-def compile_and_run(model, mode="original", quantize=True, device="cuda", num_samples=1, grammar="python", dataset="input", few_shot=False, num_examples=-1, parse_prompt=True, dev_mode=False, log_level=1, new_mask_store=False, parser="lalr", task_id=None, **kwargs):
+import json
+from pathlib import Path
+
+def compile_and_run(model, mode="original", quantize=True, device="cuda", num_samples=-1, grammar="python", dataset="input", few_shot=False, num_examples=-1, parse_prompt=True, dev_mode=False, log_level=1, new_mask_store=False, parser="lalr", task_id=None, **kwargs):
     sc = Syncode(model, mode=mode, quantize=quantize, device=device, num_samples=num_samples, grammar=grammar, dataset=dataset, few_shot=few_shot, num_fs_examples=num_examples, parse_prompt=parse_prompt, dev_mode=dev_mode, log_level=log_level, new_mask_store=new_mask_store, parser=parser, task_id=task_id, **kwargs)
     sc.infer(task_id=task_id)
 
@@ -88,6 +91,10 @@ class Syncode:
         # Setup output directory
         out_dir, self.out_path = self.get_output_path()
         self.logger = common.Logger(self.num_samples, mode, parser, out_dir, log_level=log_level, task_id=task_id)
+
+        # Setup output path for runtime evaluation
+        out_dir_time, self.out_path_time = self.get_output_path_time()
+        # self.logger = common.Logger(self.num_samples, mode, parser, out_dir, log_level=log_level, task_id=task_id)
         
         # Initialize logit processors
         logit_processors = None
@@ -133,8 +140,9 @@ class Syncode:
             output = self.run_code_eval(
                 self.num_samples,
                 self.out_path,
+                self.out_path_time,
                 format_tabs=True,
-                debug_task_id=task_id
+                debug_task_id=task_id,
                 )
         else:
             return self.user_input(prompt)
@@ -147,11 +155,19 @@ class Syncode:
         os.makedirs(out_dir, exist_ok=True)
         return out_dir,out_path
 
+    def get_output_path_time(self):
+        out_dir = f"results_time/{self.model_name}/{self.grammar}/{self.dataset}/"
+        # out_path = out_dir + 'samples_' + str(self.num_samples) + '_mode_' + str(self.mode) + "_eval.jsonl"
+        out_path = out_dir +  '_mode_' + str(self.mode) + "_parser_" + str(self.parser)+ "_eval.jsonl"
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir,out_path
+
     def run_code_eval(self, 
         num_samples_per_task: int,
         out_path: str,
+        out_path_time: str, 
         format_tabs: bool = False,
-        debug_task_id: Optional[int] = None
+        debug_task_id: Optional[int] = None,
         ):
         """
         Run evaluation on the model
@@ -176,10 +192,34 @@ class Syncode:
 
             # Also log these results in a separate file
             self.write_results(out_path, avg_time, functional_result)
+            # Also log average time by max_new_token in a separate file
+            self.write_results_time(out_path_time, avg_time, self.model.gen_kwargs['max_new_tokens'])
+
         else: # Debugging a specific task
             debug_task_id = list(problems.keys())[debug_task_id]
             return self.run_eval_for_task(num_samples_per_task, format_tabs, problems, samples, pbar, debug_task_id)
         return outputs
+
+
+    def write_results_time(self, out_path_time, avg_time, max_new_tokens):
+        """
+        Write runtime results to a separt file
+        """
+        out_path_time = Path(out_path_time)
+        if out_path_time.exists():
+            # Read the existing data
+            with open(out_path_time, 'r') as file:
+                data = json.load(file)
+        else:
+            # If the file does not exist, start with an empty dictionary
+            data = {}
+
+        # Update the data with the new max_new_tokens value and average time
+        data[max_new_tokens] = avg_time
+
+        # Write the updated data back to the JSON file
+        with open(out_path_time, 'w') as file:
+            json.dump(data, file, indent=4)
 
     def write_results(self, out_path, avg_time, functional_result):
         """

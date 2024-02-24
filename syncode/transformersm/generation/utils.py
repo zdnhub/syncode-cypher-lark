@@ -1478,6 +1478,18 @@ class GenerationMixin:
             )
         if generation_mode == GenerationMode.GREEDY_SEARCH:
             # 11. run greedy search
+            # return self.custom_greedy_search(
+            #     input_ids,
+            #     logits_processor=prepared_logits_processor,
+            #     stopping_criteria=prepared_stopping_criteria,
+            #     pad_token_id=generation_config.pad_token_id,
+            #     eos_token_id=generation_config.eos_token_id,
+            #     output_scores=generation_config.output_scores,
+            #     return_dict_in_generate=generation_config.return_dict_in_generate,
+            #     synced_gpus=synced_gpus,
+            #     streamer=streamer,
+            #     **model_kwargs,
+            # )
             return self.greedy_search(
                 input_ids,
                 logits_processor=prepared_logits_processor,
@@ -2445,8 +2457,19 @@ class GenerationMixin:
         else:
             return input_ids
 
+<<<<<<< Updated upstream
 
     def custom_search(
+=======
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+
+
+    def custom_greedy_search(
+>>>>>>> Stashed changes
         self,
         input_ids: torch.LongTensor,
         logits_processor: Optional[LogitsProcessorList] = None,
@@ -2463,9 +2486,105 @@ class GenerationMixin:
         **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""
+<<<<<<< Updated upstream
         Custom search.
         ```"""
         # init values
+=======
+        Generates sequences of token ids for models with a language modeling head using **greedy decoding** and can be
+        used for text-decoder, text-to-text, speech-to-text, and vision-to-text models.
+
+        <Tip warning={true}>
+
+        In most cases, you do not need to call [`~generation.GenerationMixin.greedy_search`] directly. Use generate()
+        instead. For an overview of generation strategies and code examples, check the [following
+        guide](../generation_strategies).
+
+        </Tip>
+
+
+        Parameters:
+            input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+                The sequence used as a prompt for the generation.
+            logits_processor (`LogitsProcessorList`, *optional*):
+                An instance of [`LogitsProcessorList`]. List of instances of class derived from [`LogitsProcessor`]
+                used to modify the prediction scores of the language modeling head applied at each generation step.
+            stopping_criteria (`StoppingCriteriaList`, *optional*):
+                An instance of [`StoppingCriteriaList`]. List of instances of class derived from [`StoppingCriteria`]
+                used to tell if the generation loop should stop.
+
+            max_length (`int`, *optional*, defaults to 20):
+                **DEPRECATED**. Use `logits_processor` or `stopping_criteria` directly to cap the number of generated
+                tokens. The maximum length of the sequence to be generated.
+            pad_token_id (`int`, *optional*):
+                The id of the *padding* token.
+            eos_token_id (`Union[int, List[int]]`, *optional*):
+                The id of the *end-of-sequence* token. Optionally, use a list to set multiple *end-of-sequence* tokens.
+            output_attentions (`bool`, *optional*, defaults to `False`):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more details.
+            output_hidden_states (`bool`, *optional*, defaults to `False`):
+                Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
+                for more details.
+            output_scores (`bool`, *optional*, defaults to `False`):
+                Whether or not to return the prediction scores. See `scores` under returned tensors for more details.
+            return_dict_in_generate (`bool`, *optional*, defaults to `False`):
+                Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+            synced_gpus (`bool`, *optional*, defaults to `False`):
+                Whether to continue running the while loop until max_length (needed for ZeRO stage 3)
+            streamer (`BaseStreamer`, *optional*):
+                Streamer object that will be used to stream the generated sequences. Generated tokens are passed
+                through `streamer.put(token_ids)` and the streamer is responsible for any further processing.
+            model_kwargs:
+                Additional model specific keyword arguments will be forwarded to the `forward` function of the model.
+                If model is an encoder-decoder model the kwargs should include `encoder_outputs`.
+
+        Return:
+            [`~generation.GenerateDecoderOnlyOutput`], [`~generation.GenerateEncoderDecoderOutput`] or
+            `torch.LongTensor`: A `torch.LongTensor` containing the generated tokens (default behaviour) or a
+            [`~generation.GenerateDecoderOnlyOutput`] if `model.config.is_encoder_decoder=False` and
+            `return_dict_in_generate=True` or a [`~generation.GenerateEncoderDecoderOutput`] if
+            `model.config.is_encoder_decoder=True`.
+
+        Examples:
+
+        ```python
+        >>> from transformers import (
+        ...     AutoTokenizer,
+        ...     AutoModelForCausalLM,
+        ...     LogitsProcessorList,
+        ...     MinLengthLogitsProcessor,
+        ...     StoppingCriteriaList,
+        ...     MaxLengthCriteria,
+        ... )
+
+        >>> tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+
+        >>> # set pad_token_id to eos_token_id because GPT2 does not have a PAD token
+        >>> model.generation_config.pad_token_id = model.generation_config.eos_token_id
+
+        >>> input_prompt = "It might be possible to"
+        >>> input_ids = tokenizer(input_prompt, return_tensors="pt").input_ids
+
+        >>> # instantiate logits processors
+        >>> logits_processor = LogitsProcessorList(
+        ...     [
+        ...         MinLengthLogitsProcessor(10, eos_token_id=model.generation_config.eos_token_id),
+        ...     ]
+        ... )
+        >>> stopping_criteria = StoppingCriteriaList([MaxLengthCriteria(max_length=20)])
+
+        >>> outputs = model.greedy_search(
+        ...     input_ids, logits_processor=logits_processor, stopping_criteria=stopping_criteria
+        ... )
+
+        >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        ["It might be possible to get a better understanding of the nature of the problem, but it's not"]
+        ```"""
+        # init values
+        # print("This is the generation from hangoo kang")
+>>>>>>> Stashed changes
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
         if max_length is not None:
@@ -2499,8 +2618,11 @@ class GenerationMixin:
         cross_attentions = () if (return_dict_in_generate and output_attentions) else None
         decoder_hidden_states = () if (return_dict_in_generate and output_hidden_states) else None
 
+<<<<<<< Updated upstream
         first_step = True
 
+=======
+>>>>>>> Stashed changes
         # if model is an encoder-decoder, retrieve encoder attention weights and hidden states
         if return_dict_in_generate and self.config.is_encoder_decoder:
             encoder_attentions = model_kwargs["encoder_outputs"].get("attentions") if output_attentions else None
@@ -2560,6 +2682,7 @@ class GenerationMixin:
                         else (outputs.hidden_states,)
                     )
 
+<<<<<<< Updated upstream
             if first_step:
                 # pick top k candidates for the first step
                 top_k = next_tokens_scores.shape[0]
@@ -2568,6 +2691,10 @@ class GenerationMixin:
             else:
                 # argmax
                 next_tokens = torch.argmax(next_tokens_scores, dim=-1)
+=======
+            # argmax
+            next_tokens = torch.argmax(next_tokens_scores, dim=-1)
+>>>>>>> Stashed changes
 
             # finished sentences should have their next token be a padding token
             if eos_token_id is not None:
@@ -2625,8 +2752,21 @@ class GenerationMixin:
                 )
         else:
             return input_ids
+<<<<<<< Updated upstream
         
 
+=======
+
+
+
+
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________________________
+#______________________________________________________________________________________________________________________________________________________
+# ______________________________________________________________________________________________________________________________________________________
+>>>>>>> Stashed changes
     def sample(
         self,
         input_ids: torch.LongTensor,
