@@ -1478,6 +1478,7 @@ class GenerationMixin:
             )
         if generation_mode == GenerationMode.GREEDY_SEARCH:
             # 11. run greedy search
+<<<<<<< HEAD
             # return self.custom_greedy_search(
             #     input_ids,
             #     logits_processor=prepared_logits_processor,
@@ -1490,6 +1491,8 @@ class GenerationMixin:
             #     streamer=streamer,
             #     **model_kwargs,
             # )
+=======
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
             return self.greedy_search(
                 input_ids,
                 logits_processor=prepared_logits_processor,
@@ -2457,6 +2460,7 @@ class GenerationMixin:
         else:
             return input_ids
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 
     def custom_search(
@@ -2470,6 +2474,10 @@ class GenerationMixin:
 
     def custom_greedy_search(
 >>>>>>> Stashed changes
+=======
+
+    def custom_search(
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
         self,
         input_ids: torch.LongTensor,
         logits_processor: Optional[LogitsProcessorList] = None,
@@ -2486,6 +2494,7 @@ class GenerationMixin:
         **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""
+<<<<<<< HEAD
 <<<<<<< Updated upstream
         Custom search.
         ```"""
@@ -2585,6 +2594,11 @@ class GenerationMixin:
         # init values
         # print("This is the generation from hangoo kang")
 >>>>>>> Stashed changes
+=======
+        Custom search.
+        ```"""
+        # init values
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
         if max_length is not None:
@@ -2618,11 +2632,16 @@ class GenerationMixin:
         cross_attentions = () if (return_dict_in_generate and output_attentions) else None
         decoder_hidden_states = () if (return_dict_in_generate and output_hidden_states) else None
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
         first_step = True
 
 =======
 >>>>>>> Stashed changes
+=======
+        first_step = True
+
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
         # if model is an encoder-decoder, retrieve encoder attention weights and hidden states
         if return_dict_in_generate and self.config.is_encoder_decoder:
             encoder_attentions = model_kwargs["encoder_outputs"].get("attentions") if output_attentions else None
@@ -2682,7 +2701,10 @@ class GenerationMixin:
                         else (outputs.hidden_states,)
                     )
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
+=======
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
             if first_step:
                 # pick top k candidates for the first step
                 top_k = next_tokens_scores.shape[0]
@@ -2691,10 +2713,13 @@ class GenerationMixin:
             else:
                 # argmax
                 next_tokens = torch.argmax(next_tokens_scores, dim=-1)
+<<<<<<< HEAD
 =======
             # argmax
             next_tokens = torch.argmax(next_tokens_scores, dim=-1)
 >>>>>>> Stashed changes
+=======
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
 
             # finished sentences should have their next token be a padding token
             if eos_token_id is not None:
@@ -2752,6 +2777,7 @@ class GenerationMixin:
                 )
         else:
             return input_ids
+<<<<<<< HEAD
 <<<<<<< Updated upstream
         
 
@@ -2767,6 +2793,10 @@ class GenerationMixin:
 #______________________________________________________________________________________________________________________________________________________
 # ______________________________________________________________________________________________________________________________________________________
 >>>>>>> Stashed changes
+=======
+        
+
+>>>>>>> 2c4f1bdc3818eeb56ff71ae9090994fc6b943886
     def sample(
         self,
         input_ids: torch.LongTensor,
