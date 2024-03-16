@@ -1,21 +1,19 @@
-import time
-import common
+import time, os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import fire
+import common
 from language_model import HuggingFaceModel
-from transformersm import LogitsProcessorList
+# from transformersm import LogitsProcessorList
 import os
-from grammar_decoder import GrammarDecoder
+# from grammar_decoder import GrammarDecoder
 from typing import Optional, Literal
 from mxeval.data import write_jsonl, get_data, get_examples
 from tqdm import tqdm
 from evaluation import check_coorectness
 from parsers.grammars.grammar import Grammar
 
-import json
-from pathlib import Path
-
-def compile_and_run(model, mode="original", quantize=True, device="cuda", num_samples=-1, grammar="python", dataset="input", few_shot=False, num_examples=-1, parse_prompt=True, dev_mode=False, log_level=1, new_mask_store=False, parser="lalr", task_id=None, **kwargs):
-    sc = Syncode(model, mode=mode, quantize=quantize, device=device, num_samples=num_samples, grammar=grammar, dataset=dataset, few_shot=few_shot, num_fs_examples=num_examples, parse_prompt=parse_prompt, dev_mode=dev_mode, log_level=log_level, new_mask_store=new_mask_store, parser=parser, task_id=task_id, **kwargs)
+def compile_and_run(model, mode="original", quantize=True, device="cuda", num_samples=1, grammar="python", dataset="input", few_shot=False, num_examples=-1, chat_mode=False, dev_mode=False, log_level=1, new_mask_store=False, parser="lalr", task_id=None, **kwargs):
+    sc = Syncode(model, mode=mode, quantize=quantize, device=device, num_samples=num_samples, grammar=grammar, dataset=dataset, few_shot=few_shot, num_fs_examples=num_examples, chat_mode=chat_mode, dev_mode=dev_mode, log_level=log_level, new_mask_store=new_mask_store, parser=parser, task_id=task_id, **kwargs)
     sc.infer(task_id=task_id)
 
 class Syncode:
@@ -32,7 +30,7 @@ class Syncode:
         new_mask_store (bool, optional): Use new DFA mask store. Defaults to False.
         few_shot (bool, optional): Run few shoting prompting. Defaults to False.
         num_fs_examples (int, optional): Number of examples for few shot prompting. Defaults to -1.
-        parse_prompt (bool, optional): Parse prompt. Defaults to True.
+        chat_mode (bool, optional): Parse only the (output) and not (prompt+output) in chat mode. Defaults to False.
         dev_mode (bool, optional): Development mode. Defaults to False.
         log_level (int, optional): Log level. Defaults to 2. 0 for no logs, 1 for minimal logs, 2 for all logs including time.
         parser (str, optional): Parser to use. Defaults to "lalr".
@@ -55,7 +53,7 @@ class Syncode:
         dataset: Literal["mbxp", "humaneval", "mathqa-x", "input"] = "input",
         few_shot: bool = False,
         num_fs_examples: int = -1,
-        parse_prompt: bool = True,
+        chat_mode: bool = False,
         dev_mode: bool = False,
         log_level: int = 1,
         new_mask_store: bool = False,
@@ -66,7 +64,7 @@ class Syncode:
         # Check inputs
         assert mode in ["original", "grammar_mask"]
         assert dataset in ["mbxp", "humaneval", "mathqa-x", "input"]
-        gen_kwargs = {'max_length', 'max_new_tokens', 'min_length', 'min_new_tokens', 'early_stopping', 'do_sample', 'num_beams', 'use_cache', 'temperature', 'top_k', 'top_p', 'num_return_sequences', 'pad_token_id', 'eos_token_id', 'custom_decoding'}
+        gen_kwargs = {'max_length', 'max_new_tokens', 'min_length', 'min_new_tokens', 'early_stopping', 'do_sample', 'num_beams', 'use_cache', 'temperature', 'top_k', 'top_p', 'num_return_sequences', 'pad_token_id', 'eos_token_id'}
         invalid_kwargs = kwargs.keys() - gen_kwargs
         assert invalid_kwargs == set(), f"Invalid arguments {invalid_kwargs}"
 
@@ -83,6 +81,7 @@ class Syncode:
         dataset_dirmap = {"mbxp": "mbxp", "humaneval": "multi-humaneval", "mathqa-x": "mathqa-x"}
         self.dataset = dataset_dirmap[dataset] if dataset != "input" else "input"
         self.parser = parser
+        self.chat_mode = chat_mode
 
         # Load model
         model = common.load_model(self.model_name, device)
@@ -91,35 +90,13 @@ class Syncode:
         # Setup output directory
         out_dir, self.out_path = self.get_output_path()
         self.logger = common.Logger(self.num_samples, mode, parser, out_dir, log_level=log_level, task_id=task_id)
-
-        # Setup output path for runtime evaluation
-        out_dir_time, self.out_path_time = self.get_output_path_time()
-        # self.logger = common.Logger(self.num_samples, mode, parser, out_dir, log_level=log_level, task_id=task_id)
         
         # Initialize logit processors
         logit_processors = None
         self.grammar_decoder = None
-        
-        if self.mode == 'grammar_mask':
-            self.grammar_decoder = GrammarDecoder(
-                self.grammar, 
-                tokenizer=tokenizer, 
-                logger=self.logger, 
-                use_cache=(not self.new_mask_store), 
-                parse_prompt=parse_prompt,
-                num_samples=self.num_samples, 
-                dev_mode=dev_mode,
-                parser=parser
-                )
-            logit_processors = LogitsProcessorList([self.grammar_decoder])
+        self.use_cache = (not self.new_mask_store)
 
-        kwargs['max_new_tokens'] = kwargs.get('max_new_tokens', 200)
-        kwargs['do_sample'] = kwargs.get('do_sample', False)
-        kwargs['use_cache'] = kwargs.get('use_cache', True)
-        kwargs['temperature'] = kwargs.get('temperature', 0.2)
-        kwargs['top_p'] = kwargs.get('top_p', 0.95)
-        kwargs['eos_token_id'] = kwargs.get('eos_token_id', tokenizer.eos_token_id)
-        kwargs['pad_token_id'] = kwargs.get('pad_token_id', tokenizer.eos_token_id) # model has no pad token
+        self.set_generation_args(kwargs, tokenizer)
 
         self.model = HuggingFaceModel(
             model, 
@@ -127,8 +104,11 @@ class Syncode:
             logger=self.logger, 
             tokenizer=tokenizer, 
             device=device, 
-            logit_processors=logit_processors, 
-            mode=self.mode, 
+            mode=self.mode,
+            parser=parser,
+            num_samples=self.num_samples,
+            chat_mode=chat_mode,
+            # use_cache=self.use_cache,
             **kwargs
             )
 
@@ -140,9 +120,8 @@ class Syncode:
             output = self.run_code_eval(
                 self.num_samples,
                 self.out_path,
-                self.out_path_time,
                 format_tabs=True,
-                debug_task_id=task_id,
+                debug_task_id=task_id
                 )
         else:
             return self.user_input(prompt)
@@ -155,19 +134,11 @@ class Syncode:
         os.makedirs(out_dir, exist_ok=True)
         return out_dir,out_path
 
-    def get_output_path_time(self):
-        out_dir = f"results_time/{self.model_name}/{self.grammar}/{self.dataset}/"
-        # out_path = out_dir + 'samples_' + str(self.num_samples) + '_mode_' + str(self.mode) + "_eval.jsonl"
-        out_path = out_dir +  '_mode_' + str(self.mode) + "_parser_" + str(self.parser)+ "_eval.jsonl"
-        os.makedirs(out_dir, exist_ok=True)
-        return out_dir,out_path
-
     def run_code_eval(self, 
         num_samples_per_task: int,
         out_path: str,
-        out_path_time: str, 
         format_tabs: bool = False,
-        debug_task_id: Optional[int] = None,
+        debug_task_id: Optional[int] = None
         ):
         """
         Run evaluation on the model
@@ -192,34 +163,22 @@ class Syncode:
 
             # Also log these results in a separate file
             self.write_results(out_path, avg_time, functional_result)
-            # Also log average time by max_new_token in a separate file
-            self.write_results_time(out_path_time, avg_time, self.model.gen_kwargs['max_new_tokens'])
-
         else: # Debugging a specific task
             debug_task_id = list(problems.keys())[debug_task_id]
             return self.run_eval_for_task(num_samples_per_task, format_tabs, problems, samples, pbar, debug_task_id)
         return outputs
-
-
-    def write_results_time(self, out_path_time, avg_time, max_new_tokens):
-        """
-        Write runtime results to a separt file
-        """
-        out_path_time = Path(out_path_time)
-        if out_path_time.exists():
-            # Read the existing data
-            with open(out_path_time, 'r') as file:
-                data = json.load(file)
-        else:
-            # If the file does not exist, start with an empty dictionary
-            data = {}
-
-        # Update the data with the new max_new_tokens value and average time
-        data[max_new_tokens] = avg_time
-
-        # Write the updated data back to the JSON file
-        with open(out_path_time, 'w') as file:
-            json.dump(data, file, indent=4)
+    
+    def set_generation_args(self, kwargs, tokenizer):
+        kwargs['max_new_tokens'] = kwargs.get('max_new_tokens', 50)
+        kwargs['do_sample'] = kwargs.get('do_sample', False)
+        kwargs['use_cache'] = kwargs.get('use_cache', True)
+        kwargs['eos_token_id'] = kwargs.get('eos_token_id', tokenizer.eos_token_id)
+        kwargs['pad_token_id'] = kwargs.get('pad_token_id', tokenizer.eos_token_id) # model has no pad token
+        if kwargs['do_sample'] or self.num_samples > 1: # If sampling, set temperature, top_k, top_p
+            kwargs['temperature'] = kwargs.get('temperature', 0.2)
+            kwargs['top_k'] = kwargs.get('top_k', self.num_samples)
+            kwargs['top_p'] = kwargs.get('top_p', 0.95)
+            print(f"Generation args: {kwargs}")
 
     def write_results(self, out_path, avg_time, functional_result):
         """
@@ -239,9 +198,10 @@ class Syncode:
         run evaluation for a specific task
         """
         self.logger.log(f"Running eval for task {task_id}")
-        if self.grammar_decoder is not None:
-            self.grammar_decoder.reset()
-
+        # if self.grammar_decoder is not None:
+            # self.grammar_decoder.reset()
+        if self.mode == "grammar_mask":
+            self.model.reset()
         if format_tabs:
             prompt = problems[task_id]["prompt"].replace("    ", "\t")
         else:
@@ -265,7 +225,12 @@ class Syncode:
         Run user input on the model with grammar mask
         """
         if prompt:
-            return self.model.generate_batch_completion_grammar(prompt, self.num_samples)
+            if self.grammar_decoder is not None: # TODO: Remove this check
+                    self.grammar_decoder.reset()
+            if self.chat_mode:
+                return self.model.generate_chat_completion_grammar(prompt)
+            else:
+                return self.model.generate_batch_completion_grammar(prompt, self.num_samples)
         
         else:
             while True:
@@ -283,3 +248,4 @@ class Syncode:
 
 if __name__ == "__main__":
     fire.Fire(compile_and_run)
+
