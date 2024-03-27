@@ -128,8 +128,13 @@ class HuggingFaceModel(LanguageModel):
         token_ids, attention_mask, past_key_values = inputs['input_ids'], inputs['attention_mask'], None
         logit_warper = self.model._get_logits_warper(gen_config)
         max_tokens = self.gen_args['max_new_tokens']+token_ids.size(1)
+        time_inference = 0
+        time_syncode = 0
+        valid_count = 0
+        total = 0
 
         while True:
+            time1 = time.time()
             try:
                 if past_key_values: # Get the last token if kv is cached for all previous tokens
                     input_ids = token_ids[..., -1].unsqueeze(-1) 
@@ -146,9 +151,15 @@ class HuggingFaceModel(LanguageModel):
 
             next_token_scores, past_key_values = outputs.logits[:, -1, :], outputs.past_key_values
             
+            time_inference += (time.time() - time1)
+            time2 = time.time()
+
             if grammar_decoder is not None:
                 next_token = self._get_next_token(gen_mode, token_ids, logit_warper, next_token_scores)
                 is_valid = grammar_decoder.is_valid(token_ids, next_token)
+                # print(is_valid)
+                total += 1
+                valid_count += is_valid
 
                 if not is_valid:
                     # calling grammar decoder is expensive. Hence, in the opportunist mode, we call it only when the standard generation is syntactically incorrect
@@ -157,6 +168,8 @@ class HuggingFaceModel(LanguageModel):
             else:
                 next_token = self._get_next_token(gen_mode, token_ids, logit_warper, next_token_scores)
             
+            time_syncode += (time.time() - time2)
+
             token_ids = torch.cat([token_ids, next_token[:, None]], dim=-1)
 
             if next_token == self.tokenizer.eos_token_id or token_ids.size(1) >= max_tokens:
@@ -164,7 +177,11 @@ class HuggingFaceModel(LanguageModel):
             
             # Update attention mask
             attention_mask = torch.cat([attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype).to(self.device)], dim=-1)
-            
+        
+        # print(f"Time taken for inference: {time_inference:.2f}s")
+        # print(f"Time taken for syncode: {time_syncode:.2f}s")
+        # print(f"Valid count: {valid_count}/{total}")
+
         return token_ids
 
     def _get_next_token(self, gen_mode, token_ids, logit_warper, next_token_scores):

@@ -100,6 +100,7 @@ class GrammarDecoder(LogitsProcessor):
         input_ids = torch.cat((input_ids, next_token.unsqueeze(0)), dim=-1)
         partial_code = self._get_partial_codes(input_ids)[0]
 
+        # print(partial_code)
         try:
             r = self.inc_parsers[0].get_acceptable_next_terminals(partial_code)
         except Exception as e:
@@ -111,7 +112,7 @@ class GrammarDecoder(LogitsProcessor):
             return True
 
         # TODO: Check if the remainder is a valid prefix for the last terminal
-        return False
+        return self.dfa_mask_store.is_valid_prefix(r)
     
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:    
