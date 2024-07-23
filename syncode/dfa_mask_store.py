@@ -318,7 +318,7 @@ class DFAMaskStore:
         return ignore_whitespace
 
     @staticmethod
-    def load_dfa_mask_store(grammar: Grammar, tokenizer, use_cache=True, logger=None, mode='grammar_mask'):
+    def load_dfa_mask_store(grammar: Grammar, tokenizer, use_cache=True, logger=common.EmptyLogger(), mode='grammar_mask'):
         '''
         Loads the dfa for the given language and tokenizer. If the dfa is not cached, it is created and cached. 
         '''
