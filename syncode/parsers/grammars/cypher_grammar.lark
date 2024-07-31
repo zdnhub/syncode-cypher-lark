@@ -1,0 +1,306 @@
+// cypher
+
+start: query -> final
+
+query: regular_query
+        | standalone_call 
+
+regular_query: single_query (union_statement)*
+
+
+single_query : single_part_q | multi_part_q
+
+standalone_call   : "CALL"i invocation_name paren_expression_chain? ["YIELD"i ("*" | yield_items)]
+
+return_statement : "RETURN"i projection_body
+
+with_statement : "WITH"i projection_body [where]
+
+skip_statement : "SKIP"i expression
+
+limit_statement : "LIMIT"i expression
+
+projection_body : ["DISTINCT"i] projection_items order_statement? skip_statement? limit_statement?
+
+projection_items : ("*" | projection_item) ("," projection_item)*
+
+projection_item : expression ["AS"i symbol]
+
+order_item : expression ["ASCENDING"i | "ASC"i | "DESCENDING"i | "DESC"i]
+
+order_statement : "ORDER"i "BY"i order_item ("," order_item)*
+
+single_part_q : (reading_statement)* (return_statement | (updating_statement)+ [return_statement])
+
+multi_part_q : (reading_statement)* ((updating_statement)* with_statement)+ single_part_q
+
+match_statement : ["OPTIONAL"i] "MATCH"i pattern_where
+
+unwind_statement : "UNWIND"i expression "AS"i symbol
+
+reading_statement : match_statement
+    | unwind_statement
+    | query_call_statement
+
+updating_statement: create_statement
+    | merge_statement
+    | delete_statement
+    | set_statement
+    | remove_statement
+
+delete_statement : ["DETACH"i] "DELETE"i expression_chain
+
+remove_statement: "REMOVE"i remove_item ("," remove_item)*
+
+remove_item: symbol node_labels
+    | property_expression
+
+query_call_statement: "CALL"i invocation_name paren_expression_chain ["YIELD"i yield_items]
+
+paren_expression_chain: "(" [expression_chain] ")"
+
+yield_items: yield_item ("," yield_item)* ["where"i]
+
+yield_item: [symbol "AS"i] symbol
+
+merge_statement: "MERGE"i pattern_part (merge_action)*
+
+merge_action: "ON"i ("MATCH"i | "CREATE"i) set_statement
+
+set_statement: "SET"i set_item ("," set_item)*
+
+set_item: property_expression "=" expression
+    | symbol ("=" | "+=") expression
+    | symbol node_labels
+
+node_labels: (":" name)+
+
+create_statement: "CREATE"i pattern
+
+pattern_where: pattern [where]
+
+where: "WHERE"i expression
+
+pattern: pattern_part ("," pattern_part)*
+
+expression: xor_expression ("OR"i xor_expression)*
+
+xor_expression: and_expression ("XOR"i and_expression)*
+
+and_expression: not_expression ("AND"i not_expression)*
+
+not_expression: ["NOT"i] comparison_expression
+
+comparison_expression: add_sub_expression (comparison_signs add_sub_expression)*
+
+comparison_signs: "="
+    | "<="
+    | ">="
+    | ">"
+    | "<"
+    | "<>"
+
+?add_sub_expression: add_sub_expression "+" multi_div_expression -> expression_add
+                  | add_sub_expression "-" multi_div_expression -> expression_sub
+                  | multi_div_expression -> expression_sub
+
+?multi_div_expression: power_expression
+                  | multi_div_expression "*" power_expression -> expression_mul
+                  | multi_div_expression "/" power_expression -> expression_div
+                  | multi_div_expression "%" power_expression -> expression_div
+
+
+?power_expression:  unary_addsub_expression 
+                   | power_expression "CARET"i unary_addsub_expression 
+
+?unary_addsub_expression: ("+"|"-")? atomic_expression
+
+atomic_expression: property_or_label_expression (string_expression | list_expression | null_expression)*
+
+list_expression: "IN"i property_or_label_expression
+    | "[" (expression? ".."i [expression] | expression) "]"
+
+string_expression: string_exp_prefix property_or_label_expression
+
+string_exp_prefix: "STARTS"i "WITH"i
+    | "ENDS"i "WITH"i
+    | "CONTAINS"i
+
+null_expression: "IS"i ["NOT"i] "NULL"i
+
+
+?property_or_label_expression: property_expression [node_labels]
+
+property_expression: atom ("." name)*
+
+pattern_part: [symbol "="] pattern_elem
+
+pattern_elem: node_pattern pattern_elem_chain*
+    | "(" pattern_elem ")"
+
+pattern_elem_chain: relationship_pattern node_pattern
+
+
+properties: map_lit
+    //| parameter
+
+
+node_pattern: "(" [symbol] [node_labels] [properties] ")"
+
+atom: literal
+    | parameter
+    | case_expression
+    | count_all
+    | list_comprehension
+    | pattern_comprehension
+    | filter_with
+    | relationships_chain_pattern
+    | parenthesized_expression
+    | function_invocation
+    | symbol
+    | subquery_exist
+
+lhs: symbol "="
+
+
+relationship_pattern: "<"i "-"i [relation_detail] "-"i [">"i]
+    | "-"i [relation_detail] "-"i [">"i]
+
+relation_detail: "[" [symbol] [relationship_types] [range_lit] [properties] "]"
+
+
+relationship_types: ":" name ("-" [":"] name)*
+
+
+union_statement: "UNION"i ["ALL"i] single_query
+
+subquery_exist: "EXISTS"i "{" (regular_query | pattern_where) "}"
+
+invocation_name: symbol ("." symbol)*
+
+function_invocation: invocation_name "(" ["DISTINCT"i] [expression_chain] ")"
+
+parenthesized_expression: "(" expression ")"
+
+filter_with: ("ALL"i | "ANY"i | "NONE"i | "SINGLE"i) "(" filter_expression ")"
+
+pattern_comprehension: "[" [lhs] relationships_chain_pattern [where] "-" expression "]"
+
+relationships_chain_pattern: node_pattern pattern_elem_chain+
+
+list_comprehension: "[" filter_expression ["-" expression] "]"
+
+filter_expression: symbol "IN"i expression [where]
+
+count_all: "COUNT"i "(" "*" ")"
+
+expression_chain: expression ("," expression)*
+
+case_expression: "CASE"i [expression] ("WHEN"i expression "THEN"i expression)+ ["ELSE"i expression] "END"i
+
+parameter: "$"i (symbol | num_lit)
+
+?literal: bool_lit
+    | num_lit
+    | "NULL"i
+    | string_lit
+    | char_lit
+    //| list_lit
+    //| map_lit
+
+?range_lit: "*" [num_lit] (".."i [num_lit])?
+
+?bool_lit: "true"i
+    | "false"i
+
+?num_lit: DIGIT
+
+?string_lit: STRING_LITERAL
+
+?char_lit: CHAR_LITERAL
+
+?list_lit: "[" [expression_chain] "]"
+
+?map_lit: "{" [map_pair ("," map_pair)*] "}"
+
+?map_pair: name ":" expression
+
+?name: symbol
+    | reserved_word
+
+symbol: "`" letter* "`"
+    | (letter | /[0-9]/)+
+    | "COUNT"i
+    | "FILTER"i
+    | "EXTRACT"i
+    | "ANY"i
+    | "NONE"i
+    | "SINGLE"i
+
+letter: /[a-z_]/
+
+reserved_word: "ALL"i
+    | "ASC"i
+    | "ASCENDING"i
+    | "BY"i
+    | "CREATE"i
+    | "DELETE"i
+    | "DESC"i
+    | "DESCENDING"i
+    | "DETACH"i
+    | "EXISTS"i
+    | "LIMIT"i
+    | "MATCH"i
+    | "MERGE"i
+    | "ON"i
+    | "OPTIONAL"i
+    | "ORDER"i
+    | "REMOVE"i
+    | "RETURN"i
+    | "SET"i
+    | "SKIP"i
+    | "WHERE"i
+    | "WITH"i
+    | "UNION"i
+    | "UNWIND"i
+    | "AND"i
+    | "AS"i
+    | "CONTAINS"i
+    | "DISTINCT"i
+    | "ENDS"i
+    | "IN"i
+    | "IS"i
+    | "NOT"i
+    | "OR"i
+    | "STARTS"i
+    | "XOR"i
+    | "FALSE"i
+    | "TRUE"i
+    | "NULL"i
+    | "CONSTRAINT"i
+    | "DO"i
+    | "FOR"i
+    | "REQUIRE"i
+    | "UNIQUE"i
+    | "CASE"i
+    | "WHEN"i
+    | "THEN"i
+    | "ELSE"i
+    | "END"i
+    | "MANDATORY"i
+    | "SCALAR"i
+    | "OF"i
+    | "ADD"i
+    | "DROP"i
+
+_STRING_INNER: /(~["\\\r\n])*/
+STRING_LITERAL: "\"" _STRING_INNER "\""
+
+%import common.LETTER -> CHAR_LITERAL
+%import common.CNAME -> C_NAME
+%import common.NUMBER -> DIGIT
+%import common.WS
+%import common.SQL_COMMENT
+%import common.WS_INLINE
+
+%ignore WS
